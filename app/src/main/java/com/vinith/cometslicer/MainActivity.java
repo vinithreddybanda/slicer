@@ -2,14 +2,14 @@ package com.vinith.cometslicer;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -18,13 +18,16 @@ import android.widget.Toast;
 
 public class MainActivity extends Activity {
     private static final int REQ_CAPTURE = 5101;
+
+    private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView status;
     private TextView logBox;
 
-    private final BroadcastReceiver logReceiver = new BroadcastReceiver() {
+    private final Runnable refresher = new Runnable() {
         @Override
-        public void onReceive(Context context, Intent intent) {
+        public void run() {
             refresh();
+            ui.postDelayed(this, 700);
         }
     };
 
@@ -39,7 +42,7 @@ public class MainActivity extends Activity {
         root.setPadding(36, 54, 36, 36);
 
         TextView title = new TextView(this);
-        title.setText("Comet Slicer v2");
+        title.setText("Comet Slicer v3");
         title.setTextSize(26);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
 
@@ -70,7 +73,7 @@ public class MainActivity extends Activity {
                 return;
             }
             startService(new Intent(this, OverlayLogService.class));
-            AppLog.add("Floating button/log panel requested");
+            AppLog.add("Floating panel requested");
             Toast.makeText(this, "Floating panel shown", Toast.LENGTH_SHORT).show();
             refresh();
         });
@@ -89,55 +92,64 @@ public class MainActivity extends Activity {
         setContentView(root);
 
         if (Build.VERSION.SDK_INT >= 33) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 44);
+            try {
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 44);
+            } catch (Throwable t) {
+                AppLog.add("Notification permission skipped: " + t.getClass().getSimpleName());
+            }
         }
+
         refresh();
-    }
-
-    @Override
-    protected void onStart() {
-        super.onStart();
-        IntentFilter filter = new IntentFilter(AppLog.ACTION);
-        if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(logReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-        } else {
-            registerReceiver(logReceiver, filter);
-        }
-    }
-
-    @Override
-    protected void onStop() {
-        try {
-            unregisterReceiver(logReceiver);
-        } catch (Exception ignored) {}
-        super.onStop();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        refresh();
+        ui.removeCallbacks(refresher);
+        ui.post(refresher);
+    }
+
+    @Override
+    protected void onPause() {
+        ui.removeCallbacks(refresher);
+        super.onPause();
     }
 
     private void openOverlayPermission() {
-        if (Settings.canDrawOverlays(this)) {
-            AppLog.add("Overlay permission already OK");
-            Toast.makeText(this, "Overlay already enabled", Toast.LENGTH_SHORT).show();
-            return;
+        try {
+            if (Settings.canDrawOverlays(this)) {
+                AppLog.add("Overlay permission already OK");
+                Toast.makeText(this, "Overlay already enabled", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            AppLog.add("Opening overlay permission");
+            Intent intent = new Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getPackageName())
+            );
+            startActivity(intent);
+        } catch (Throwable t) {
+            AppLog.add("ERROR overlay settings: " + t.getClass().getSimpleName());
+            Toast.makeText(this, "Could not open overlay settings", Toast.LENGTH_SHORT).show();
         }
-        AppLog.add("Opening overlay permission");
-        Intent intent = new Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:" + getPackageName())
-        );
-        startActivity(intent);
     }
 
     private void requestCapturePermission() {
-        MediaProjectionManager manager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        Bot.projectionManager = manager;
-        AppLog.add("Requesting screen capture permission");
-        startActivityForResult(manager.createScreenCaptureIntent(), REQ_CAPTURE);
+        try {
+            MediaProjectionManager manager =
+                    (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+            if (manager == null) {
+                AppLog.add("ERROR: MediaProjectionManager null");
+                Toast.makeText(this, "Screen capture not available", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            Bot.projectionManager = manager;
+            AppLog.add("Requesting screen capture permission");
+            startActivityForResult(manager.createScreenCaptureIntent(), REQ_CAPTURE);
+        } catch (Throwable t) {
+            AppLog.add("ERROR capture request: " + t.getClass().getSimpleName());
+            Toast.makeText(this, "Could not request screen capture", Toast.LENGTH_SHORT).show();
+        }
     }
 
     @Override
@@ -156,13 +168,19 @@ public class MainActivity extends Activity {
 
     private void refresh() {
         if (status == null || logBox == null) return;
+
         String botState = Bot.running ? "RUNNING" : (Bot.starting ? "STARTING" : "STOPPED");
+        boolean overlayOk = false;
+        try {
+            overlayOk = Settings.canDrawOverlays(this);
+        } catch (Throwable ignored) {}
+
         status.setText(
-                "Overlay: " + (Settings.canDrawOverlays(this) ? "OK" : "missing") +
+                "Overlay: " + (overlayOk ? "OK" : "missing") +
                 "\nAccessibility: " + (Bot.gestureService != null ? "OK" : "missing") +
                 "\nScreen capture: " + (Bot.hasCapturePermission() ? "OK" : "missing") +
                 "\nBot: " + botState +
-                "\n\nNote: after STOP, Android may require screen capture permission again."
+                "\n\nThis v3 build avoids startup receivers/application hooks to prevent auto-close."
         );
         logBox.setText("Logs:\n" + AppLog.dump());
     }

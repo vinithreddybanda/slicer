@@ -1,36 +1,26 @@
-# CometSlicerBot v2
+# CometSlicerBot v3 no-autoclose
 
-Re-coded version to avoid the app closing automatically and to show useful floating logs.
+This version specifically fixes app auto-closing immediately on open.
 
-## Fixed / inspected problems
+## What was removed/changed
 
-- Replaced unsafe `registerReceiver(receiver, filter)` with Android 13+ safe `Context.RECEIVER_NOT_EXPORTED`.
-- Added app-level crash logger.
-- Re-coded capture service lifecycle.
-- Added clear STARTING/RUNNING/STOPPED state.
-- Added foreground service startup error logs.
-- Added MediaProjection startup, stop, and frame-processing logs.
-- Added floating logs/errors under the overlay button.
-- Added slice/tap coordinate logs.
-- Set `targetSdk 33` for this debug tool to reduce Android 14 MediaProjection strict one-shot crashes.
-- Capture permission is cleared after stop because Android may not allow token reuse.
+- Removed custom `Application` from manifest.
+- Removed all dynamic broadcast receivers from MainActivity and overlay.
+- Replaced broadcast log updates with safe Handler refresh loops.
+- Wrapped startup permission calls with try/catch.
+- Kept floating logs, capture logs, match logs, and slice logs.
+- Kept GitHub Actions debug APK build.
 
-## How to use
+## Use
 
 1. Open app.
 2. Enable overlay permission.
-3. Enable accessibility permission.
+3. Enable accessibility.
 4. Allow screen capture.
-5. Tap `Show floating start/logs`.
-6. Open your own game/test app.
-7. Tap START.
+5. Show floating start/logs.
+6. Open your test game.
+7. Press START.
 
-## APK build
+## Good commit
 
-Push to GitHub. Actions will build debug APK and upload artifact:
-
-`comet-slicer-debug-apk`
-
-## Good commit message
-
-`fix: recode capture lifecycle and floating debug logs`
+`fix: remove startup crash sources and stabilize main screen`
