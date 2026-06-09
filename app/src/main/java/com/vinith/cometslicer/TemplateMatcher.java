@@ -11,20 +11,28 @@ import java.util.List;
 public class TemplateMatcher {
     private final List<Template> cometTemplates = new ArrayList<>();
     private final List<Template> skullTemplates = new ArrayList<>();
+    private long lastNoMatchLogMs = 0L;
 
     public TemplateMatcher(Context context) {
         load(context, "templates/comet_white_template.png", true);
         load(context, "templates/comet_pink_template.png", true);
         load(context, "templates/skull_template.png", false);
+        EventLog.add("Templates loaded: comets=" + cometTemplates.size() + ", skulls=" + skullTemplates.size());
     }
 
     private void load(Context context, String asset, boolean comet) {
         try (InputStream is = context.getAssets().open(asset)) {
-            Bitmap bitmap = BitmapFactory.decodeStream(is).copy(Bitmap.Config.ARGB_8888, false);
+            Bitmap original = BitmapFactory.decodeStream(is).copy(Bitmap.Config.ARGB_8888, false);
+            int scaledW = Math.max(8, Math.round(original.getWidth() * BotState.captureScale));
+            int scaledH = Math.max(8, Math.round(original.getHeight() * BotState.captureScale));
+            Bitmap bitmap = Bitmap.createScaledBitmap(original, scaledW, scaledH, true);
+            original.recycle();
             Template t = new Template(asset, bitmap);
+            bitmap.recycle();
             if (comet) cometTemplates.add(t);
             else skullTemplates.add(t);
         } catch (Exception e) {
+            EventLog.add("ERROR: template load failed " + asset);
             throw new RuntimeException("Template load failed: " + asset, e);
         }
     }
@@ -32,26 +40,35 @@ public class TemplateMatcher {
     public Detection findComet(Bitmap screen) {
         Detection bestComet = null;
         for (Template t : cometTemplates) {
-            Detection d = findBest(screen, t, 16, 0.74f);
+            Detection d = findBest(screen, t, 12, 0.66f);
             if (d != null && (bestComet == null || d.score > bestComet.score)) {
                 bestComet = d;
             }
         }
 
-        if (bestComet == null) return null;
+        if (bestComet == null) {
+            long now = System.currentTimeMillis();
+            if (now - lastNoMatchLogMs > 1500) {
+                lastNoMatchLogMs = now;
+                EventLog.add("No comet match");
+            }
+            return null;
+        }
 
         Detection skull = null;
         for (Template t : skullTemplates) {
-            Detection d = findBest(screen, t, 14, 0.70f);
+            Detection d = findBest(screen, t, 12, 0.64f);
             if (d != null && (skull == null || d.score > skull.score)) {
                 skull = d;
             }
         }
 
         if (skull != null && distance(bestComet.x, bestComet.y, skull.x, skull.y) < 160f * BotState.captureScale) {
+            EventLog.add("Skipped near skull score=" + round(skull.score));
             return null;
         }
 
+        EventLog.add("Comet match " + bestComet.label.replace("templates/", "") + " score=" + round(bestComet.score));
         return bestComet;
     }
 
@@ -116,6 +133,10 @@ public class TemplateMatcher {
         float dx = ax - bx;
         float dy = ay - by;
         return (float) Math.sqrt(dx * dx + dy * dy);
+    }
+
+    private String round(float value) {
+        return String.format(java.util.Locale.US, "%.2f", value);
     }
 
     private static class Template {

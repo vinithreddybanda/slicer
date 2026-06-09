@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
@@ -14,8 +15,7 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.media.projection.MediaProjection;
 import android.os.Build;
-import android.content.pm.ServiceInfo;
-    import android.os.Handler;
+import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
 import android.util.DisplayMetrics;
@@ -38,6 +38,7 @@ public class ScreenCaptureService extends Service {
     private int captureHeight;
     private int densityDpi;
     private volatile boolean processing;
+    private volatile boolean cleanStop;
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -47,20 +48,43 @@ public class ScreenCaptureService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        createChannel();
-        startForeground(NOTIFICATION_ID, buildNotification());
+        EventLog.init(this);
+        EventLog.add("Capture service created");
 
-        matcher = new TemplateMatcher(this);
+        createChannel();
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            );
+        } else {
+            startForeground(NOTIFICATION_ID, buildNotification());
+        }
 
         workerThread = new HandlerThread("comet-screen-worker");
         workerThread.start();
         worker = new Handler(workerThread.getLooper());
+    }
 
-        startProjection();
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        worker.post(() -> {
+            try {
+                startProjection();
+            } catch (Throwable t) {
+                EventLog.add("ERROR: capture failed: " + t.getClass().getSimpleName());
+                EventLog.add("ERROR detail: " + safe(t.getMessage()));
+                stopSelf();
+            }
+        });
+        return START_NOT_STICKY;
     }
 
     private void startProjection() {
         if (!BotState.hasProjection()) {
+            EventLog.add("ERROR: no screen capture token. Allow capture again.");
             stopSelf();
             return;
         }
@@ -76,10 +100,30 @@ public class ScreenCaptureService extends Service {
         captureHeight = Math.max(600, (int) (metrics.heightPixels * BotState.captureScale));
         densityDpi = metrics.densityDpi;
 
+        EventLog.add("Capture size " + captureWidth + "x" + captureHeight);
+
+        matcher = new TemplateMatcher(this);
+
         projection = BotState.projectionManager.getMediaProjection(
                 BotState.projectionResultCode,
                 BotState.projectionData
         );
+
+        if (projection == null) {
+            EventLog.add("ERROR: MediaProjection is null. Allow capture again.");
+            BotState.clearProjection();
+            stopSelf();
+            return;
+        }
+
+        projection.registerCallback(new MediaProjection.Callback() {
+            @Override
+            public void onStop() {
+                EventLog.add("MediaProjection stopped by Android");
+                BotState.clearProjection();
+                stopSelf();
+            }
+        }, worker);
 
         imageReader = ImageReader.newInstance(captureWidth, captureHeight, PixelFormat.RGBA_8888, 2);
 
@@ -93,6 +137,16 @@ public class ScreenCaptureService extends Service {
                 null,
                 worker
         );
+
+        if (virtualDisplay == null) {
+            EventLog.add("ERROR: virtual display failed");
+            stopSelf();
+            return;
+        }
+
+        BotState.isStarting = false;
+        BotState.isRunning = true;
+        EventLog.add("Capture running");
 
         imageReader.setOnImageAvailableListener(reader -> {
             if (!BotState.isRunning || processing) {
@@ -108,6 +162,8 @@ public class ScreenCaptureService extends Service {
             worker.post(() -> {
                 try {
                     handleImage(image);
+                } catch (Throwable t) {
+                    EventLog.add("ERROR frame: " + t.getClass().getSimpleName());
                 } finally {
                     image.close();
                     processing = false;
@@ -143,11 +199,25 @@ public class ScreenCaptureService extends Service {
 
     @Override
     public void onDestroy() {
-        BotState.isRunning = false;
+        EventLog.add("Capture service destroyed");
 
+        BotState.isRunning = false;
+        BotState.isStarting = false;
+
+        if (imageReader != null) {
+            imageReader.setOnImageAvailableListener(null, null);
+            imageReader.close();
+        }
         if (virtualDisplay != null) virtualDisplay.release();
-        if (imageReader != null) imageReader.close();
-        if (projection != null) projection.stop();
+
+        if (projection != null) {
+            try {
+                projection.stop();
+            } catch (Exception ignored) {}
+        }
+
+        // MediaProjection consent tokens are one-session tokens on newer Android versions.
+        BotState.clearProjection();
 
         if (workerThread != null) {
             workerThread.quitSafely();
@@ -179,5 +249,9 @@ public class ScreenCaptureService extends Service {
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setOngoing(true)
                 .build();
+    }
+
+    private String safe(String value) {
+        return value == null ? "no message" : value;
     }
 }
