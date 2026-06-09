@@ -17,97 +17,98 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 public class MainActivity extends Activity {
-    private static final int REQ_MEDIA_PROJECTION = 701;
-
+    private static final int REQ_CAPTURE = 5101;
     private TextView status;
-    private TextView logs;
+    private TextView logBox;
 
-    private final BroadcastReceiver receiver = new BroadcastReceiver() {
+    private final BroadcastReceiver logReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            refreshStatus();
+            refresh();
         }
     };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        EventLog.init(this);
-        EventLog.add("App opened");
+        AppLog.init(this);
+        AppLog.add("Main opened");
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(36, 56, 36, 36);
+        root.setPadding(36, 54, 36, 36);
 
         TextView title = new TextView(this);
-        title.setText("Comet Slicer");
+        title.setText("Comet Slicer v2");
         title.setTextSize(26);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
 
         status = new TextView(this);
         status.setTextSize(15);
-        status.setPadding(0, 22, 0, 22);
+        status.setPadding(0, 20, 0, 20);
 
         Button overlay = new Button(this);
-        overlay.setText("1. Enable overlay button");
-        overlay.setOnClickListener(v -> requestOverlay());
+        overlay.setText("1. Enable overlay permission");
+        overlay.setOnClickListener(v -> openOverlayPermission());
 
-        Button access = new Button(this);
-        access.setText("2. Enable accessibility gestures");
-        access.setOnClickListener(v -> {
-            EventLog.add("Opening accessibility settings");
+        Button gesture = new Button(this);
+        gesture.setText("2. Enable gesture accessibility");
+        gesture.setOnClickListener(v -> {
+            AppLog.add("Opening accessibility settings");
             startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
         });
 
         Button capture = new Button(this);
         capture.setText("3. Allow screen capture");
-        capture.setOnClickListener(v -> requestScreenCapture());
+        capture.setOnClickListener(v -> requestCapturePermission());
 
-        Button startOverlay = new Button(this);
-        startOverlay.setText("Show floating start/stop button + logs");
-        startOverlay.setOnClickListener(v -> {
+        Button show = new Button(this);
+        show.setText("4. Show floating start/logs");
+        show.setOnClickListener(v -> {
             if (!Settings.canDrawOverlays(this)) {
-                requestOverlay();
+                openOverlayPermission();
                 return;
             }
-            startService(new Intent(this, OverlayButtonService.class));
-            EventLog.add("Overlay button shown");
-            Toast.makeText(this, "Overlay button shown", Toast.LENGTH_SHORT).show();
-            refreshStatus();
+            startService(new Intent(this, OverlayLogService.class));
+            AppLog.add("Floating button/log panel requested");
+            Toast.makeText(this, "Floating panel shown", Toast.LENGTH_SHORT).show();
+            refresh();
         });
 
-        logs = new TextView(this);
-        logs.setTextSize(12);
-        logs.setPadding(0, 20, 0, 0);
+        logBox = new TextView(this);
+        logBox.setTextSize(12);
+        logBox.setPadding(0, 18, 0, 0);
 
         root.addView(title);
         root.addView(status);
         root.addView(overlay);
-        root.addView(access);
+        root.addView(gesture);
         root.addView(capture);
-        root.addView(startOverlay);
-        root.addView(logs);
+        root.addView(show);
+        root.addView(logBox);
         setContentView(root);
 
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 44);
         }
-        refreshStatus();
+        refresh();
     }
 
     @Override
     protected void onStart() {
         super.onStart();
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(EventLog.ACTION_LOG_UPDATED);
-        filter.addAction(EventLog.ACTION_STATE_UPDATED);
-        registerReceiver(receiver, filter);
+        IntentFilter filter = new IntentFilter(AppLog.ACTION);
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(logReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(logReceiver, filter);
+        }
     }
 
     @Override
     protected void onStop() {
         try {
-            unregisterReceiver(receiver);
+            unregisterReceiver(logReceiver);
         } catch (Exception ignored) {}
         super.onStop();
     }
@@ -115,51 +116,54 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        refreshStatus();
+        refresh();
     }
 
-    private void requestOverlay() {
-        if (!Settings.canDrawOverlays(this)) {
-            EventLog.add("Opening overlay permission");
-            Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:" + getPackageName()));
-            startActivity(intent);
-        } else {
-            EventLog.add("Overlay permission already OK");
+    private void openOverlayPermission() {
+        if (Settings.canDrawOverlays(this)) {
+            AppLog.add("Overlay permission already OK");
             Toast.makeText(this, "Overlay already enabled", Toast.LENGTH_SHORT).show();
+            return;
         }
+        AppLog.add("Opening overlay permission");
+        Intent intent = new Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getPackageName())
+        );
+        startActivity(intent);
     }
 
-    private void requestScreenCapture() {
-        MediaProjectionManager manager =
-                (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        BotState.projectionManager = manager;
-        EventLog.add("Requesting screen capture permission");
-        startActivityForResult(manager.createScreenCaptureIntent(), REQ_MEDIA_PROJECTION);
+    private void requestCapturePermission() {
+        MediaProjectionManager manager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        Bot.projectionManager = manager;
+        AppLog.add("Requesting screen capture permission");
+        startActivityForResult(manager.createScreenCaptureIntent(), REQ_CAPTURE);
     }
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQ_MEDIA_PROJECTION && resultCode == RESULT_OK && data != null) {
-            BotState.projectionResultCode = resultCode;
-            BotState.projectionData = data;
-            EventLog.add("Screen capture permission saved");
+        if (requestCode == REQ_CAPTURE && resultCode == RESULT_OK && data != null) {
+            Bot.projectionResultCode = resultCode;
+            Bot.projectionData = data;
+            AppLog.add("Screen capture permission saved");
             Toast.makeText(this, "Screen capture ready", Toast.LENGTH_SHORT).show();
-        } else if (requestCode == REQ_MEDIA_PROJECTION) {
-            EventLog.add("ERROR: screen capture permission denied");
+        } else if (requestCode == REQ_CAPTURE) {
+            AppLog.add("ERROR: screen capture permission denied");
         }
-        refreshStatus();
+        refresh();
     }
 
-    private void refreshStatus() {
-        String text =
-                "Overlay: " + (Settings.canDrawOverlays(this) ? "OK" : "not enabled") +
-                "\nAccessibility: " + (BotState.accessibility != null ? "OK" : "not enabled / reconnect app after enabling") +
-                "\nScreen capture: " + (BotState.hasProjection() ? "OK" : "not allowed") +
-                "\nBot: " + (BotState.isRunning ? "RUNNING" : (BotState.isStarting ? "STARTING" : "STOPPED")) +
-                "\n\nImportant: Android allows one MediaProjection session per permission. After STOP/crash, tap Allow screen capture again.";
-        status.setText(text);
-        logs.setText("Logs:\n" + EventLog.dump());
+    private void refresh() {
+        if (status == null || logBox == null) return;
+        String botState = Bot.running ? "RUNNING" : (Bot.starting ? "STARTING" : "STOPPED");
+        status.setText(
+                "Overlay: " + (Settings.canDrawOverlays(this) ? "OK" : "missing") +
+                "\nAccessibility: " + (Bot.gestureService != null ? "OK" : "missing") +
+                "\nScreen capture: " + (Bot.hasCapturePermission() ? "OK" : "missing") +
+                "\nBot: " + botState +
+                "\n\nNote: after STOP, Android may require screen capture permission again."
+        );
+        logBox.setText("Logs:\n" + AppLog.dump());
     }
 }

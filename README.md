@@ -1,39 +1,36 @@
-# Comet Slicer Bot
+# CometSlicerBot v2
 
-Android screen-capture automation demo with:
-- Floating overlay START / STOP button
-- MediaProjection screen capture
-- AccessibilityService swipe gestures
-- Pure Java template matching using PNG files in `assets/templates`
-- GitHub Actions debug APK build
+Re-coded version to avoid the app closing automatically and to show useful floating logs.
 
-Use only on your own apps, test builds, or games where automation is allowed.
+## Fixed / inspected problems
 
-## Setup on phone
+- Replaced unsafe `registerReceiver(receiver, filter)` with Android 13+ safe `Context.RECEIVER_NOT_EXPORTED`.
+- Added app-level crash logger.
+- Re-coded capture service lifecycle.
+- Added clear STARTING/RUNNING/STOPPED state.
+- Added foreground service startup error logs.
+- Added MediaProjection startup, stop, and frame-processing logs.
+- Added floating logs/errors under the overlay button.
+- Added slice/tap coordinate logs.
+- Set `targetSdk 33` for this debug tool to reduce Android 14 MediaProjection strict one-shot crashes.
+- Capture permission is cleared after stop because Android may not allow token reuse.
 
-1. Install the debug APK.
-2. Open **Comet Slicer**.
-3. Enable overlay permission.
-4. Enable accessibility service for gestures.
-5. Allow screen capture.
-6. Tap **Show floating start/stop button**.
-7. Open the game and tap START.
+## How to use
 
-## Templates
+1. Open app.
+2. Enable overlay permission.
+3. Enable accessibility permission.
+4. Allow screen capture.
+5. Tap `Show floating start/logs`.
+6. Open your own game/test app.
+7. Tap START.
 
-Current templates:
-- `app/src/main/assets/templates/comet_white_template.png`
-- `app/src/main/assets/templates/comet_pink_template.png`
-- `app/src/main/assets/templates/skull_template.png`
+## APK build
 
-For better accuracy, replace these PNGs with clean crops from your own device screenshots.
-
-## GitHub Actions
-
-Push this project to GitHub. The workflow builds:
-
-`app/build/outputs/apk/debug/app-debug.apk`
-
-The APK is uploaded as artifact name:
+Push to GitHub. Actions will build debug APK and upload artifact:
 
 `comet-slicer-debug-apk`
+
+## Good commit message
+
+`fix: recode capture lifecycle and floating debug logs`

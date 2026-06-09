@@ -7,150 +7,150 @@ import android.graphics.BitmapFactory;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 public class TemplateMatcher {
-    private final List<Template> cometTemplates = new ArrayList<>();
-    private final List<Template> skullTemplates = new ArrayList<>();
-    private long lastNoMatchLogMs = 0L;
+    private final List<Template> comets = new ArrayList<>();
+    private final List<Template> skulls = new ArrayList<>();
+    private long lastNoMatchMs = 0L;
 
     public TemplateMatcher(Context context) {
         load(context, "templates/comet_white_template.png", true);
         load(context, "templates/comet_pink_template.png", true);
         load(context, "templates/skull_template.png", false);
-        EventLog.add("Templates loaded: comets=" + cometTemplates.size() + ", skulls=" + skullTemplates.size());
+        AppLog.add("Templates loaded c=" + comets.size() + " s=" + skulls.size());
     }
 
-    private void load(Context context, String asset, boolean comet) {
+    private void load(Context context, String asset, boolean isComet) {
         try (InputStream is = context.getAssets().open(asset)) {
             Bitmap original = BitmapFactory.decodeStream(is).copy(Bitmap.Config.ARGB_8888, false);
-            int scaledW = Math.max(8, Math.round(original.getWidth() * BotState.captureScale));
-            int scaledH = Math.max(8, Math.round(original.getHeight() * BotState.captureScale));
-            Bitmap bitmap = Bitmap.createScaledBitmap(original, scaledW, scaledH, true);
+            int w = Math.max(10, Math.round(original.getWidth() * Bot.scale));
+            int h = Math.max(10, Math.round(original.getHeight() * Bot.scale));
+            Bitmap scaled = Bitmap.createScaledBitmap(original, w, h, true);
             original.recycle();
-            Template t = new Template(asset, bitmap);
-            bitmap.recycle();
-            if (comet) cometTemplates.add(t);
-            else skullTemplates.add(t);
-        } catch (Exception e) {
-            EventLog.add("ERROR: template load failed " + asset);
-            throw new RuntimeException("Template load failed: " + asset, e);
+
+            Template t = new Template(asset, scaled);
+            scaled.recycle();
+
+            if (isComet) comets.add(t);
+            else skulls.add(t);
+        } catch (Throwable t) {
+            AppLog.add("ERROR: template load " + asset + " " + t.getClass().getSimpleName());
+            throw new RuntimeException(t);
         }
     }
 
-    public Detection findComet(Bitmap screen) {
-        Detection bestComet = null;
-        for (Template t : cometTemplates) {
-            Detection d = findBest(screen, t, 12, 0.66f);
-            if (d != null && (bestComet == null || d.score > bestComet.score)) {
-                bestComet = d;
-            }
-        }
-
-        if (bestComet == null) {
+    public Detection find(Bitmap frame) {
+        Detection comet = bestOf(frame, comets, 14, 0.62f);
+        if (comet == null) {
             long now = System.currentTimeMillis();
-            if (now - lastNoMatchLogMs > 1500) {
-                lastNoMatchLogMs = now;
-                EventLog.add("No comet match");
+            if (now - lastNoMatchMs > 1600) {
+                lastNoMatchMs = now;
+                AppLog.add("No comet match");
             }
             return null;
         }
 
-        Detection skull = null;
-        for (Template t : skullTemplates) {
-            Detection d = findBest(screen, t, 12, 0.64f);
-            if (d != null && (skull == null || d.score > skull.score)) {
-                skull = d;
-            }
-        }
-
-        if (skull != null && distance(bestComet.x, bestComet.y, skull.x, skull.y) < 160f * BotState.captureScale) {
-            EventLog.add("Skipped near skull score=" + round(skull.score));
+        Detection skull = bestOf(frame, skulls, 14, 0.62f);
+        if (skull != null && dist(comet.x, comet.y, skull.x, skull.y) < 170f * Bot.scale) {
+            AppLog.add("Skipped: skull near comet score=" + fmt(skull.score));
             return null;
         }
 
-        EventLog.add("Comet match " + bestComet.label.replace("templates/", "") + " score=" + round(bestComet.score));
-        return bestComet;
+        AppLog.add("Comet " + shortName(comet.label) + " score=" + fmt(comet.score));
+        return comet;
     }
 
-    private Detection findBest(Bitmap screen, Template template, int step, float minScore) {
-        int sw = screen.getWidth();
-        int sh = screen.getHeight();
-        int tw = template.width;
-        int th = template.height;
-        if (tw >= sw || th >= sh) return null;
+    private Detection bestOf(Bitmap frame, List<Template> templates, int step, float threshold) {
+        Detection best = null;
+        for (Template t : templates) {
+            Detection d = best(frame, t, step, threshold);
+            if (d != null && (best == null || d.score > best.score)) best = d;
+        }
+        return best;
+    }
 
-        int[] screenPixels = new int[sw * sh];
-        screen.getPixels(screenPixels, 0, sw, 0, 0, sw, sh);
+    private Detection best(Bitmap frame, Template t, int step, float threshold) {
+        int fw = frame.getWidth();
+        int fh = frame.getHeight();
+        if (t.w >= fw || t.h >= fh) return null;
 
-        float best = -1f;
+        int[] fp = new int[fw * fh];
+        frame.getPixels(fp, 0, fw, 0, 0, fw, fh);
+
+        float bestScore = -1f;
         int bestX = 0;
         int bestY = 0;
 
-        for (int y = 0; y <= sh - th; y += step) {
-            for (int x = 0; x <= sw - tw; x += step) {
-                float score = scoreAt(screenPixels, sw, x, y, template);
-                if (score > best) {
-                    best = score;
+        for (int y = 0; y <= fh - t.h; y += step) {
+            for (int x = 0; x <= fw - t.w; x += step) {
+                float s = score(fp, fw, x, y, t);
+                if (s > bestScore) {
+                    bestScore = s;
                     bestX = x;
                     bestY = y;
                 }
             }
         }
 
-        if (best < minScore) return null;
-        return new Detection(bestX + tw / 2f, bestY + th / 2f, best, template.name);
+        if (bestScore < threshold) return null;
+        return new Detection(bestX + t.w / 2f, bestY + t.h / 2f, bestScore, t.name);
     }
 
-    private float scoreAt(int[] screen, int sw, int ox, int oy, Template t) {
-        long totalDiff = 0;
+    private float score(int[] frame, int frameW, int ox, int oy, Template t) {
+        long diff = 0;
         int count = 0;
 
-        for (int y = 0; y < t.height; y += 4) {
-            int si = (oy + y) * sw + ox;
-            int ti = y * t.width;
-            for (int x = 0; x < t.width; x += 4) {
-                int sp = screen[si + x];
-                int tp = t.pixels[ti + x];
+        for (int y = 0; y < t.h; y += 4) {
+            int fi = (oy + y) * frameW + ox;
+            int ti = y * t.w;
+            for (int x = 0; x < t.w; x += 4) {
+                int a = frame[fi + x];
+                int b = t.pixels[ti + x];
 
-                int sr = (sp >> 16) & 255;
-                int sg = (sp >> 8) & 255;
-                int sb = sp & 255;
+                int ar = (a >> 16) & 255;
+                int ag = (a >> 8) & 255;
+                int ab = a & 255;
 
-                int tr = (tp >> 16) & 255;
-                int tg = (tp >> 8) & 255;
-                int tb = tp & 255;
+                int br = (b >> 16) & 255;
+                int bg = (b >> 8) & 255;
+                int bb = b & 255;
 
-                totalDiff += Math.abs(sr - tr) + Math.abs(sg - tg) + Math.abs(sb - tb);
+                diff += Math.abs(ar - br) + Math.abs(ag - bg) + Math.abs(ab - bb);
                 count++;
             }
         }
 
-        float maxDiff = count * 765f;
-        return 1f - (totalDiff / maxDiff);
+        return 1f - (diff / (count * 765f));
     }
 
-    private float distance(float ax, float ay, float bx, float by) {
+    private float dist(float ax, float ay, float bx, float by) {
         float dx = ax - bx;
         float dy = ay - by;
         return (float) Math.sqrt(dx * dx + dy * dy);
     }
 
-    private String round(float value) {
-        return String.format(java.util.Locale.US, "%.2f", value);
+    private String fmt(float v) {
+        return String.format(Locale.US, "%.2f", v);
     }
 
-    private static class Template {
+    private String shortName(String s) {
+        int i = s.lastIndexOf('/');
+        return i >= 0 ? s.substring(i + 1) : s;
+    }
+
+    private static final class Template {
         final String name;
-        final int width;
-        final int height;
+        final int w;
+        final int h;
         final int[] pixels;
 
         Template(String name, Bitmap bitmap) {
             this.name = name;
-            this.width = bitmap.getWidth();
-            this.height = bitmap.getHeight();
-            this.pixels = new int[width * height];
-            bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
+            this.w = bitmap.getWidth();
+            this.h = bitmap.getHeight();
+            this.pixels = new int[w * h];
+            bitmap.getPixels(pixels, 0, w, 0, 0, w, h);
         }
     }
 }

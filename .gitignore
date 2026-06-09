@@ -2,6 +2,6 @@
 build/
 app/build/
 local.properties
-*.iml
 .idea/
+*.iml
 .DS_Store

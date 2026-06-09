@@ -1,6 +1,6 @@
 package com.vinith.cometslicer;
 
-public class Detection {
+public final class Detection {
     public final float x;
     public final float y;
     public final float score;
