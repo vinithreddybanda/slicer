@@ -40,7 +40,11 @@ public class TemplateMatcher {
         }
     }
 
-    public Detection find(Bitmap frame) {
+    public Detection findComet(Bitmap frame) {
+            return find(frame);
+        }
+
+        public Detection find(Bitmap frame) {
         Detection comet = bestOf(frame, comets, 14, 0.62f);
         if (comet == null) {
             long now = System.currentTimeMillis();
